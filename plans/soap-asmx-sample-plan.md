@@ -3,34 +3,34 @@
 
 > **⚠️ IMPORTANT: This repo is intentionally ASMX, NOT WCF.**
 >
-> The feature requirements document (below) references `[ServiceContract]` and `[OperationContract]` — those are **WCF attributes**. This repository deliberately uses the **ASMX programming model** (`[WebService]`, `[WebMethod]`, `.asmx` files, `SoapHttpClientProtocol` proxies). A separate repository will cover WCF-specific upgrade challenges. Do not conflate the two — they have distinct upgrade paths, different serializers, and different migration tooling. The "after upgrade" `UpgradeTarget` project uses SoapCore (which does use `[ServiceContract]`/`[OperationContract]`) because that is the ASMX → ASP.NET Core migration target.
+> Any reference to `[ServiceContract]` and `[OperationContract]` describes **WCF attributes**. This repository deliberately uses the **ASMX programming model** (`[WebService]`, `[WebMethod]`, `.asmx` files, `SoapHttpClientProtocol` proxies). A separate repository covers WCF-specific upgrade challenges. Do not conflate the two — they have distinct upgrade paths, different serializers, and different migration tooling.
 
 ---
 
 ## Objective
 
-Build a **minimal ASMX web service sample** that demonstrates the highest-value 20% of features representing ~80% of real-world upgrade complexity for the .NET Upgrade Tool.
+Build a **minimal ASMX web service sample** that covers the 20% of ASMX features found in 80% or more of real-world SOAP web applications.
 
-Goal is **maximum upgrade signal density**:
-- Highlight key modernization challenges for ASMX services
-- Enable clear before/after comparison (ASMX → SoapCore)
-- Provide a repeatable demo and validation scenario
+Goal is **authentic representation of a typical enterprise ASMX app**:
+- Demonstrate the patterns most commonly found when surveying real legacy SOAP services
+- Provide a realistic, runnable sample that a .NET upgrade tool can analyze
+- Avoid rare or niche patterns that inflate scope without adding representational value
 
 ---
 
 ## ASMX Attribute Mapping Note
 
-The connected requirements use WCF terminology. Here is the explicit ASMX equivalent for each:
+Requirements documents and tooling often use WCF terminology. Here is the explicit ASMX equivalent for each:
 
-| Requirements Doc Term | This Repo Uses (ASMX) | "After Upgrade" Uses (SoapCore) |
-|-----------------------|-----------------------|----------------------------------|
-| `[ServiceContract]` | `[WebService(Namespace="...")]` | `[ServiceContract(Namespace="...")]` |
-| `[OperationContract]` | `[WebMethod]` | `[OperationContract]` |
-| `[DataContract]` / `[DataMember]` | Plain class + `XmlSerializer` | `[DataContract]` / `[DataMember]` |
-| `FaultContract` | `SoapException` with detail XML | `FaultException<T>` with `[FaultContract]` |
-| `BasicHttpBinding` config | `<webServices>` in `web.config` | SoapCore endpoint config in `Program.cs` |
-| `ServiceHost` (self-hosted) | IIS/IIS Express + `.asmx` handler | `app.UseEndpoints(e => e.UseSoapEndpoint<...>())` |
-| `svcutil.exe` proxy | `wsdl.exe` / Add Web Reference | Same wsdl.exe or re-generated via svcutil |
+| WCF / Requirements Term | This Repo Uses (ASMX) |
+|-------------------------|-----------------------|
+| `[ServiceContract]` | `[WebService(Namespace="...")]` |
+| `[OperationContract]` | `[WebMethod]` |
+| `[DataContract]` / `[DataMember]` | Plain class + `XmlSerializer` |
+| `FaultContract` | `SoapException` with detail XML |
+| `BasicHttpBinding` config | `<webServices>` in `web.config` |
+| `ServiceHost` (self-hosted) | IIS/IIS Express + `.asmx` handler |
+| `svcutil.exe` proxy | `wsdl.exe` / Add Web Reference |
 
 ---
 
@@ -48,19 +48,14 @@ ContosoOrders.sln
 │   ├── Models/Enums.cs            (OrderStatus, ProductCategory)
 │   └── Models/AuthenticationHeader.cs  (SoapHeader subclass)
 │
-├── ContosoOrders.Service         ← ASP.NET Web App (ASMX) — three auth surfaces
-│   ├── OrderService.asmx              ← Auth: Custom SOAP header token
+├── ContosoOrders.Service         ← ASP.NET Web App (.NET 4.7.2, ASMX)
+│   ├── OrderService.asmx
 │   ├── OrderService.asmx.cs
-│   ├── OrderServiceWindows.asmx       ← Auth: Windows Authentication (NTLM/Kerberos)
-│   ├── OrderServiceWindows.asmx.cs
-│   ├── OrderServiceBasic.asmx         ← Auth: HTTP Basic Auth [⚠️ see note below]
-│   ├── OrderServiceBasic.asmx.cs
-│   ├── Extensions/
-│   │   └── LoggingExtension.cs        (SoapExtension — request/response logging)
-│   └── web.config                     (<location> blocks per service file)
+│   ├── App_Data/                  (empty; created at runtime for logs)
+│   └── web.config
 │
 ├── ContosoOrders.WebClient       ← ASP.NET Web App (consumer)
-│   ├── Default.aspx              (simple invocation demo page)
+│   ├── Default.aspx              (demo page — invokes OrderService)
 │   ├── App_WebReferences/
 │   │   └── OrderServiceRef/
 │   │       ├── Reference.cs      (wsdl.exe-generated SoapHttpClientProtocol proxy)
@@ -68,11 +63,13 @@ ContosoOrders.sln
 │   │       └── OrderService.disco
 │   └── web.config
 │
-└── ContosoOrders.UpgradeTarget   ← ASP.NET Core (post-upgrade, SoapCore)
-    ├── Program.cs                (UseSoapEndpoint<OrderService>)
-    ├── IOrderService.cs          ([ServiceContract] interface)
-    ├── OrderService.cs           (implementation, same logic)
-    └── appsettings.json
+└── ContosoOrders.Tests           ← MSTest unit test project (.NET 4.7.2)
+    ├── GetOrderByIdTests.cs
+    ├── CreateOrderTests.cs
+    ├── UpdateOrderStatusTests.cs
+    ├── DeleteOrderTests.cs
+    ├── SearchOrdersTests.cs
+    └── GetOrdersByCustomerTests.cs
 ```
 
 ---
@@ -91,8 +88,16 @@ The ASMX equivalent of `[ServiceContract]`/`[OperationContract]`.
 [WebServiceBinding(ConformsTo = WsiProfiles.BasicProfile1_1)]
 public class OrderService : WebService
 {
+    public AuthenticationHeader authHeader;
+
     [WebMethod(Description = "Gets complete Order by ID.", CacheDuration = 30)]
     public Order GetOrderById(int orderId) { ... }
+
+    [WebMethod(Description = "Returns order summaries for a given customer.")]
+    public OrderSummary[] GetOrdersByCustomer(int customerId) { ... }
+
+    [WebMethod(Description = "Searches orders by status, date range, and/or customer name.")]
+    public OrderSummary[] SearchOrders(OrderSearchCriteria criteria) { ... }
 
     [WebMethod(Description = "Creates a new order. Returns new OrderId.")]
     [SoapHeader("authHeader", Required = true)]
@@ -108,7 +113,7 @@ public class OrderService : WebService
 }
 ```
 
-**Minimum operations (2–3 meaningful ops):** ✅ GetOrderById, CreateOrder, UpdateOrderStatus, DeleteOrder, SearchOrders
+**Operations:** GetOrderById, GetOrdersByCustomer, SearchOrders, CreateOrder, UpdateOrderStatus, DeleteOrder
 
 ---
 
@@ -117,7 +122,7 @@ public class OrderService : WebService
 ASMX uses `XmlSerializer` (not `DataContractSerializer`). Complex types are plain classes — no `[DataContract]` needed.
 
 **Key patterns to exercise:**
-- Nested types: `Order → OrderItem[] → Product`, `Order → Customer → Address`
+- Nested types: `Order → OrderItem[]`, `Order → Customer → Address`
 - Collections: `[XmlArray("OrderItems")] [XmlArrayItem("Item")] public OrderItem[] Items`
 - Enums: `OrderStatus` with `[XmlEnum("Shipped")]`
 - Nullable DateTime: the "Specified" boolean flag pattern (`ShippedDateSpecified`)
@@ -192,27 +197,11 @@ The `.asmx` handler is registered in `Machine.config` and activated by the `<%@ 
 
 ---
 
-## Tier 2 — Supporting Features (Optional)
+## Tier 2 — Supporting Features
 
-### 6. Authentication — All Three Mechanisms
+### 6. Authentication → Custom SOAP Header Token
 
-Three separate `.asmx` service files demonstrate three distinct auth patterns, each with a different upgrade challenge. `web.config` uses `<location>` blocks to apply different IIS auth settings per path.
-
----
-
-#### 6a. Custom SOAP Header Token (`OrderService.asmx`)
-
-Token travels **inside the SOAP envelope** — not in HTTP headers.
-
-```xml
-<!-- web.config -->
-<location path="OrderService.asmx">
-  <system.web>
-    <authentication mode="None" />
-    <authorization><allow users="*" /></authorization>
-  </system.web>
-</location>
-```
+The most prevalent auth pattern in enterprise ASMX apps: a token transmitted **inside the SOAP envelope**, not in HTTP headers.
 
 ```csharp
 public AuthenticationHeader authHeader;  // public field on service class
@@ -227,105 +216,27 @@ public int CreateOrder(Order order)
 }
 ```
 
-**Upgrade challenge:** Token moves from `SoapHeader` subclass to `[MessageContract]`/`[MessageHeader]` in SoapCore — structural refactor of how credentials travel in the envelope.
-
----
-
-#### 6b. Windows Authentication (`OrderServiceWindows.asmx`)
-
-IIS handles authentication; service reads the caller's identity via `User.Identity`.
-
-```xml
-<!-- web.config -->
-<location path="OrderServiceWindows.asmx">
-  <system.web>
-    <authentication mode="Windows" />
-    <authorization><deny users="?" /></authorization>
-  </system.web>
-  <system.webServer>
-    <security>
-      <authentication>
-        <anonymousAuthentication enabled="false" />
-        <windowsAuthentication enabled="true" />
-      </authentication>
-    </security>
-  </system.webServer>
-</location>
-```
-
+`AuthenticationHeader` is a subclass of `SoapHeader` defined in `ContosoOrders.Models`:
 ```csharp
-[WebMethod(Description = "Returns orders for the authenticated Windows user.")]
-public Order[] GetMyOrders()
+public class AuthenticationHeader : SoapHeader
 {
-    string callerIdentity = User.Identity.Name;  // e.g. "DOMAIN\jsmith"
-    return repository.GetByOwner(callerIdentity);
-}
-```
-
-**✅ Testable with IIS Express** — no full IIS install needed. Requires one manual edit to `.vs\config\applicationhost.config`:
-
-```xml
-<!-- Find the <site> entry for ContosoOrders.Service and add: -->
-<system.webServer>
-  <security>
-    <authentication>
-      <anonymousAuthentication enabled="false" />
-      <windowsAuthentication enabled="true" />
-    </authentication>
-  </security>
-</system.webServer>
-```
-
-> **Note:** This edit is per-developer machine. Add a `README-IISExpress-WindowsAuth.md` with setup steps. The `.vs/` folder is typically git-ignored so the change won't persist across clones.
-
-**Upgrade challenge:** `<authentication mode="Windows">` + IIS module dependency disappears in ASP.NET Core. Replacement is `services.AddAuthentication(NegotiateDefaults.AuthenticationScheme).AddNegotiate()` — a pure-code migration with no `web.config` equivalent.
-
----
-
-#### 6c. HTTP Basic Authentication (`OrderServiceBasic.asmx`)
-
-> **⚠️ PLACEHOLDER — limited local testability without setup**
->
-> IIS Express supports Basic Auth via `applicationhost.config` (`<basicAuthentication enabled="true" />`), but it authenticates against **Windows local machine accounts** — not a custom user store. This makes it awkward for a portable demo. Recommended approach: implement the service code and proxy `Credentials` pattern in full; document IIS Express setup steps in a README for manual testing. The upgrade signal is in the code and `web.config` patterns, not the live auth challenge.
-
-```xml
-<!-- web.config -->
-<location path="OrderServiceBasic.asmx">
-  <system.webServer>
-    <security>
-      <authentication>
-        <anonymousAuthentication enabled="false" />
-        <basicAuthentication enabled="true" realm="ContosoOrders" />
-      </authentication>
-    </security>
-  </system.webServer>
-</location>
-```
-
-```csharp
-[WebMethod(Description = "Gets order — requires HTTP Basic credentials.")]
-public Order GetOrderById(int orderId)
-{
-    // IIS has already validated credentials before this runs.
-    // User.Identity.Name available if needed for authorization logic.
-    return repository.GetById(orderId);
+    public string ApiToken { get; set; }
+    public string ClientId { get; set; }
 }
 ```
 
 **Client proxy usage:**
 ```csharp
-var proxy = new OrderServiceBasicRef.OrderManagementService();
-proxy.Credentials = new NetworkCredential("username", "password");
-Order o = proxy.GetOrderById(1);
+proxy.AuthenticationHeaderValue = new OrderServiceRef.AuthenticationHeader
+{
+    ApiToken = "DEMO-TOKEN-12345",
+    ClientId = "web-client"
+};
 ```
-
-**Upgrade challenge:** `proxy.Credentials` (HTTP-level) maps to ASP.NET Core Basic Auth middleware or SoapCore's `opt.UseBasicAuthentication = true`. The IIS module dependency (`<basicAuthentication>`) has no direct equivalent — replaced by middleware registration in `Program.cs`.
 
 ---
 
 ### 7. Fault Handling → `SoapException` with structured `<detail>`
-
-The ASMX equivalent of `FaultException<T>` / `[FaultContract]`.
 
 ```csharp
 throw new SoapException(
@@ -335,37 +246,7 @@ throw new SoapException(
     BuildFaultDetail("ORDER_NOT_FOUND"));   // structured XML detail node
 ```
 
-This produces a SOAP `<Fault>` envelope — equivalent to WCF's typed fault contract.
-
----
-
-### 8. Logging / Diagnostics → `SoapExtension`
-
-The ASMX equivalent of WCF `IDispatchMessageInspector`. Intercepts raw SOAP XML before/after deserialization.
-
-```csharp
-public class LoggingExtension : SoapExtension
-{
-    public override void ProcessMessage(SoapMessage message)
-    {
-        switch (message.Stage)
-        {
-            case SoapMessageStage.BeforeDeserialize: /* log incoming XML */ break;
-            case SoapMessageStage.AfterSerialize:    /* log outgoing XML */ break;
-        }
-    }
-}
-```
-
-Register globally in `web.config`:
-```xml
-<webServices>
-  <soapExtensionTypes>
-    <add type="Contoso.OrderManagement.LoggingExtension, ContosoOrders.Service"
-         priority="1" group="0" />
-  </soapExtensionTypes>
-</webServices>
-```
+This produces a SOAP `<Fault>` envelope with a typed error code in the `<detail>` element.
 
 ---
 
@@ -373,51 +254,31 @@ Register globally in `web.config`:
 
 | Feature | Why Excluded |
 |---------|-------------|
-| NetTcpBinding / named pipes | ASMX is HTTP-only; also out of scope per requirements |
-| WS-* specs (WS-Security, WS-Transaction) | Not applicable to ASMX; also per requirements |
-| Duplex callbacks | Not supported in ASMX; also per requirements |
-| Custom `IServiceBehavior` pipelines | WCF concept only; ASMX uses `SoapExtension` |
-| MTOM | Not exercised; also per requirements |
-| `[SoapDocumentMethod]` per-method overrides | Rarely used; also not supported in SoapCore upgrade target |
-| `[XmlInclude]` / `[SoapInclude]` polymorphism | Not supported in SoapCore — would be a dead end |
-| `EnableSession = true` beyond demo | Not meaningful for upgrade signal |
+| NetTcpBinding / named pipes | ASMX is HTTP-only |
+| WS-* specs (WS-Security, WS-Transaction) | Not applicable to ASMX |
+| Duplex callbacks | Not supported in ASMX |
+| Custom `IServiceBehavior` pipelines | WCF concept only |
+| MTOM | Not exercised |
+| `[SoapDocumentMethod]` per-method overrides | Rarely used in real codebases |
+| `[XmlInclude]` / `[SoapInclude]` polymorphism | Rare; complicates XmlSerializer with low real-world prevalence |
+| `SoapExtension` logging | Niche infrastructure pattern; not found in most ASMX apps |
+| Windows Authentication / HTTP Basic Auth | Less universal than SOAP header token for a single-service sample |
+| `EnableSession = true` | Not meaningful beyond a demo stub |
 | COM+ transactions (`TransactionOption`) | `System.EnterpriseServices` gone in .NET Core |
 | **WCF (`[ServiceContract]`, `ServiceHost`)** | **This is a separate repository. See note at top.** |
 
 ---
 
-## UpgradeTarget — SoapCore (After Upgrade)
-
-The `ContosoOrders.UpgradeTarget` project demonstrates the **same service** running on ASP.NET Core via SoapCore. This is the "after" side of the before/after comparison.
-
-**Key transformation points:**
-| Before (ASMX) | After (SoapCore) |
-|---------------|-----------------|
-| `[WebService(Namespace="...")]` on class | `[ServiceContract(Namespace="...")]` on **interface** |
-| `[WebMethod]` on method | `[OperationContract]` on interface method |
-| `SoapHeader` subclass | `[MessageContract]` / `[MessageHeader]` |
-| `SoapException` | `FaultException<T>` with `[FaultContract]` |
-| `web.config <webServices>` | `Program.cs app.UseEndpoints(...)` |
-| `IIS Express + .asmx` | Kestrel + `UseSoapEndpoint<T>` |
-| `SoapExtension` | `ISoapMessageProcessor` / `IMessageInspector2` |
-
-**SoapCore limitations to call out explicitly:**
-- ❌ `[XmlInclude]` / `[SoapInclude]` — not supported (design around this in the sample)
-- ❌ `[SoapDocumentMethod]` — not supported
-
----
-
 ## Success Criteria
 
-The sample is successful when the upgrade tool can:
+The sample is representative when a .NET upgrade tool can:
 
 - [ ] Detect `[WebService]` / `[WebMethod]` service surface area
 - [ ] Analyze `web.config <webServices>` protocol and endpoint configuration
 - [ ] Interpret XmlSerializer-based data contracts and serialization attributes
 - [ ] Reason about the IIS `.asmx` hosting model
 - [ ] Identify SOAP header auth patterns (`SoapHeader` subclass)
-- [ ] Map `SoapException` fault handling to `FaultException<T>`
-- [ ] Support clear before/after comparison: ASMX 4.7.2 → SoapCore on .NET 8
+- [ ] Identify `SoapException` fault handling patterns
 
 ---
 
@@ -428,22 +289,189 @@ The sample is successful when the upgrade tool can:
 | Requirement | Coverage |
 |-------------|---------|
 | 2–3 meaningful operations | 6 operations: GetOrderById, GetOrdersByCustomer, SearchOrders, CreateOrder, UpdateOrderStatus, DeleteOrder |
-| Complex nested DTOs | Order → OrderItem[] → Product; Order → Customer → Address |
-| Collections | `Order[]`, `OrderSummary[]`, `OrderItem[]` |
-| Enums | `OrderStatus` (Pending/Processing/Shipped/Delivered/Cancelled) |
+| Complex nested DTOs | Order → OrderItem[]; Order → Customer → Address |
+| Collections | `OrderSummary[]`, `OrderItem[]` |
+| Enums | `OrderStatus` (Pending/Processing/Shipped/Delivered/Cancelled), `ProductCategory` |
 | Date types | `OrderDate`, nullable `ShippedDate` via Specified pattern |
 | Auth header | `AuthenticationHeader : SoapHeader` on all write operations |
 | Fault handling | Business rule violations, not-found, validation errors |
-| Logging hook | `LoggingExtension : SoapExtension` on all requests |
 
 ---
 
 ## References
 
-- Research report (full detail): `../session-state/.../research/find-all-of-the-important-topics-that-we-would-nee.md`
-- SoapCore repo: https://github.com/DigDes/SoapCore
 - ASMX `[WebService]` docs: https://learn.microsoft.com/en-us/dotnet/api/system.web.services.webserviceattribute?view=netframework-4.8
 - ASMX `[WebMethod]` docs: https://learn.microsoft.com/en-us/dotnet/api/system.web.services.webmethodattribute?view=netframework-4.8
 - `SoapHeader` auth pattern: https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-4.0/9z52by6a(v=vs.100)
 - `SoapException` docs: https://learn.microsoft.com/en-us/dotnet/api/system.web.services.protocols.soapexception?view=netframework-4.8
-- `SoapExtension` docs: https://learn.microsoft.com/en-us/dotnet/api/system.web.services.protocols.soapextension?view=netframework-4.8
+
+---
+
+## Repository / Data Layer
+
+`ContosoOrders.Service` uses an in-memory singleton repository (`OrderRepository`) shared across all service requests. There is no database dependency.
+
+### `IOrderRepository` interface (in `ContosoOrders.Service`)
+
+```csharp
+public interface IOrderRepository
+{
+    Order GetById(int orderId);
+    OrderSummary[] GetByCustomer(int customerId);
+    OrderSummary[] Search(OrderSearchCriteria criteria);
+    int Create(Order order);
+    void UpdateStatus(int orderId, OrderStatus newStatus);
+    void Delete(int orderId);
+}
+```
+
+### Seed Data
+
+Pre-populated at application startup with **8 orders across 3 customers**:
+
+| OrderId | Customer | Status | OrderDate |
+|---------|----------|--------|-----------|
+| 1 | Acme Corp (CustomerId=1) | Delivered | 2023-03-15 |
+| 2 | Acme Corp | Shipped | 2023-08-22 |
+| 3 | Acme Corp | Pending | 2024-01-10 |
+| 4 | Northwind Ltd (CustomerId=2) | Processing | 2024-02-05 |
+| 5 | Northwind Ltd | Cancelled | 2023-11-30 |
+| 6 | Northwind Ltd | Delivered | 2023-06-14 |
+| 7 | Fabrikam Inc (CustomerId=3) | Pending | 2024-03-01 |
+| 8 | Fabrikam Inc | Shipped | 2024-03-18 |
+
+Orders 3 and 7 (Pending) are the only ones eligible for `DeleteOrder`.
+
+---
+
+## Model Field Definitions
+
+### `Order`
+```csharp
+public class Order
+{
+    public int OrderId { get; set; }
+    public DateTime OrderDate { get; set; }
+    public DateTime ShippedDate { get; set; }
+    public bool ShippedDateSpecified { get; set; }   // XmlSerializer nullable pattern
+    public OrderStatus Status { get; set; }
+    public Customer Customer { get; set; }
+    [XmlArray("OrderItems")]
+    [XmlArrayItem("Item")]
+    public OrderItem[] Items { get; set; }
+    [XmlElement(IsNullable = true)]
+    public string Notes { get; set; }
+}
+```
+
+### `OrderItem`
+```csharp
+public class OrderItem
+{
+    public int OrderItemId { get; set; }
+    public string ProductName { get; set; }
+    public string Sku { get; set; }
+    public ProductCategory Category { get; set; }
+    public int Quantity { get; set; }
+    public decimal UnitPrice { get; set; }
+}
+```
+
+### `Customer`
+```csharp
+public class Customer
+{
+    public int CustomerId { get; set; }
+    public string CompanyName { get; set; }
+    public string ContactName { get; set; }
+    public Address ShippingAddress { get; set; }
+}
+```
+
+### `Address`
+```csharp
+public class Address
+{
+    public string Street { get; set; }
+    public string City { get; set; }
+    public string StateProvince { get; set; }
+    public string PostalCode { get; set; }
+    public string Country { get; set; }
+}
+```
+
+### `OrderSummary`
+```csharp
+public class OrderSummary
+{
+    public int OrderId { get; set; }
+    public DateTime OrderDate { get; set; }
+    public OrderStatus Status { get; set; }
+    public string CustomerName { get; set; }
+    public int ItemCount { get; set; }
+    public decimal TotalAmount { get; set; }
+}
+```
+
+### `OrderSearchCriteria`
+```csharp
+public class OrderSearchCriteria
+{
+    [XmlElement(IsNullable = true)]
+    public string CustomerName { get; set; }          // partial match
+    public OrderStatus Status { get; set; }
+    public bool StatusSpecified { get; set; }         // omit filter if false
+    public DateTime FromDate { get; set; }
+    public bool FromDateSpecified { get; set; }
+    public DateTime ToDate { get; set; }
+    public bool ToDateSpecified { get; set; }
+}
+```
+
+### `Enums`
+```csharp
+public enum OrderStatus
+{
+    [XmlEnum("Pending")]    Pending,
+    [XmlEnum("Processing")] Processing,
+    [XmlEnum("Shipped")]    Shipped,
+    [XmlEnum("Delivered")]  Delivered,
+    [XmlEnum("Cancelled")]  Cancelled
+}
+
+public enum ProductCategory
+{
+    [XmlEnum("Electronics")] Electronics,
+    [XmlEnum("Office")]      Office,
+    [XmlEnum("Industrial")]  Industrial,
+    [XmlEnum("Other")]       Other
+}
+```
+
+### `AuthenticationHeader`
+```csharp
+public class AuthenticationHeader : SoapHeader
+{
+    public string ApiToken { get; set; }
+    public string ClientId { get; set; }
+}
+```
+
+---
+
+## Unit Tests (`ContosoOrders.Tests`)
+
+**Framework:** MSTest (`[TestClass]` / `[TestMethod]`) — .NET Framework 4.7.2 test project.  
+**Mocking:** Moq — mocks `IOrderRepository` so tests do not depend on seed data.  
+**Scope:** Service method behavior — happy path + key error/boundary cases.
+
+### Test classes and scenarios
+
+| Test Class | Scenarios |
+|------------|-----------|
+| `GetOrderByIdTests` | Returns correct order; throws `SoapException` (CLIENT) for unknown ID |
+| `GetOrdersByCustomerTests` | Returns summaries for known customer; returns empty array for unknown customer |
+| `SearchOrdersTests` | Returns all when no criteria; filters by status; filters by date range; filters by customer name; combined criteria |
+| `CreateOrderTests` | Returns new ID; validates token (throws on bad token); throws on null order |
+| `UpdateOrderStatusTests` | Updates status; validates token; throws on unknown order ID |
+| `DeleteOrderTests` | Deletes a Pending order; validates token; throws on non-Pending order; throws on unknown order ID |
