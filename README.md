@@ -1,4 +1,4 @@
-# tiny-soap — Contoso Orders ASMX Sample
+# Contoso Orders ASMX Sample
 
 A minimal, runnable **ASMX web service** sample targeting **ASP.NET / .NET Framework 4.7.2**. It exists to give .NET upgrade tooling a realistic, representative legacy SOAP codebase to analyze.
 
