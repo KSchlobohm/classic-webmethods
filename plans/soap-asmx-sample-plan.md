@@ -49,9 +49,9 @@ ContosoOrders.sln
 │   └── Models/AuthenticationHeader.cs  (SoapHeader subclass)
 │
 ├── ContosoOrders.Service         ← ASP.NET Web App (.NET 4.7.2, ASMX)
+│   ├── Global.asax                (Application_Start — seeds OrderRepository)
 │   ├── OrderService.asmx
 │   ├── OrderService.asmx.cs
-│   ├── App_Data/                  (empty; created at runtime for logs)
 │   └── web.config
 │
 ├── ContosoOrders.WebClient       ← ASP.NET Web App (consumer)
@@ -90,7 +90,7 @@ public class OrderService : WebService
 {
     public AuthenticationHeader authHeader;
 
-    [WebMethod(Description = "Gets complete Order by ID.", CacheDuration = 30)]
+    [WebMethod(Description = "Gets complete Order by ID.", CacheDuration = 30)]  // NOTE: 30-second cache — stale reads possible after mutations
     public Order GetOrderById(int orderId) { ... }
 
     [WebMethod(Description = "Returns order summaries for a given customer.")]
@@ -325,6 +325,27 @@ public interface IOrderRepository
 }
 ```
 
+### Thread Safety
+
+`OrderRepository` is a singleton accessed by concurrent ASMX request threads. Use a `private readonly object _syncRoot = new object()` with `lock (_syncRoot)` around all reads and writes. This is the authentic .NET Framework 4.x pattern.
+
+### Startup Seeding
+
+Seed data is loaded in `Global.asax Application_Start`:
+
+```csharp
+protected void Application_Start(object sender, EventArgs e)
+{
+    OrderRepository.Instance.Seed();
+}
+```
+
+`Seed()` populates the repository with the 8 orders below. It is safe to call only once at startup.
+
+### `SearchOrders` null criteria contract
+
+Passing `null` as the criteria object is valid and returns all orders (no filters applied). This is the lenient/tolerant pattern common in legacy services.
+
 ### Seed Data
 
 Pre-populated at application startup with **8 orders across 3 customers**:
@@ -465,13 +486,42 @@ public class AuthenticationHeader : SoapHeader
 **Mocking:** Moq — mocks `IOrderRepository` so tests do not depend on seed data.  
 **Scope:** Service method behavior — happy path + key error/boundary cases.
 
+### Test Seam
+
+ASMX creates service instances via the parameterless constructor. Use the two-constructor pattern (common in .NET 4.x enterprise codebases):
+
+```csharp
+public class OrderService : WebService
+{
+    private readonly IOrderRepository _repository;
+
+    // Used by ASP.NET runtime
+    public OrderService() : this(OrderRepository.Instance) { }
+
+    // Used by unit tests (internal to keep it off the public API)
+    internal OrderService(IOrderRepository repository)
+    {
+        _repository = repository;
+    }
+}
+```
+
+### `HttpContext` in Fault Creation
+
+`SoapException` uses `Context.Request.Url.AbsoluteUri` as the actor parameter. `Context` is null when methods are called directly in unit tests. Guard it:
+
+```csharp
+string actor = Context?.Request?.Url?.AbsoluteUri ?? string.Empty;
+throw new SoapException("Order not found.", SoapException.ClientFaultCode, actor, detail);
+```
+
 ### Test classes and scenarios
 
 | Test Class | Scenarios |
 |------------|-----------|
 | `GetOrderByIdTests` | Returns correct order; throws `SoapException` (CLIENT) for unknown ID |
 | `GetOrdersByCustomerTests` | Returns summaries for known customer; returns empty array for unknown customer |
-| `SearchOrdersTests` | Returns all when no criteria; filters by status; filters by date range; filters by customer name; combined criteria |
+| `SearchOrdersTests` | Returns all when criteria is null; returns all when no Specified flags set; filters by status; filters by date range; filters by customer name; combined criteria |
 | `CreateOrderTests` | Returns new ID; validates token (throws on bad token); throws on null order |
 | `UpdateOrderStatusTests` | Updates status; validates token; throws on unknown order ID |
 | `DeleteOrderTests` | Deletes a Pending order; validates token; throws on non-Pending order; throws on unknown order ID |
