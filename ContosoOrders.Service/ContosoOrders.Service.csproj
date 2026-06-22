@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <RootNamespace>Contoso.OrderManagement</RootNamespace>
+    <AssemblyName>ContosoOrders.Service</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Web" />
+    <Reference Include="System.Web.Services" />
+    <ProjectReference Include="..\ContosoOrders.Models\ContosoOrders.Models.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>ContosoOrders.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>
