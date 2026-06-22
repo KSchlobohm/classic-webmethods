@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <RootNamespace>Contoso.OrderManagement.Models</RootNamespace>
+    <AssemblyName>ContosoOrders.Models</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Web.Services" />
+  </ItemGroup>
+</Project>
